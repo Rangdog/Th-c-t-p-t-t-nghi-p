@@ -56,72 +56,117 @@ def preprocess_images(img_path):
     img = cv2.resize(img, (img_width, img_height))
     img = img.astype('float32') / 255.0
     img = np.expand_dims(img, axis=-1)  # Thêm chiều kênh
+    print(f"Shape of preprocessed image: {img.shape}")
     return img
 
 
 def augment_image(image):
     augmented_images = []
 
-    # 1. Xoay hình ảnh
-    for angle in range(-30, 31, 10):  # Xoay từ -30 đến 30 độ với bước 10 độ
+    # Ensure image is 3D (height, width, channel)
+    if len(image.shape) == 2:
+        image = np.expand_dims(image, axis=-1)
+
+    # Check if the image is empty
+    if image.size == 0 or image.shape[0] == 0 or image.shape[1] == 0:
+        print("Error: Empty image provided to augment_image function")
+        return [image]  # Return the original image if it's empty
+
+    # Convert back to uint8 for OpenCV operations
+    image_uint8 = (image * 255).astype(np.uint8)
+
+    # 1. Rotate image
+    for angle in range(-30, 31, 10):
         M = cv2.getRotationMatrix2D(
             (image.shape[1] // 2, image.shape[0] // 2), angle, 1.0)
         rotated_image = cv2.warpAffine(
-            image, M, (image.shape[1], image.shape[0]))
+            image_uint8, M, (image.shape[1], image.shape[0]))
         augmented_images.append(rotated_image)
 
-    # 2. Thay đổi độ sáng
-    for brightness in [0.5, 1, 1.5]:  # Thay đổi độ sáng
-        # beta=0 để không thay đổi độ tối
-        bright_image = cv2.convertScaleAbs(image, alpha=brightness, beta=0)
+    # 2. Change brightness
+    for brightness in [0.5, 1, 1.5]:
+        bright_image = cv2.convertScaleAbs(
+            image_uint8, alpha=brightness, beta=0)
         augmented_images.append(bright_image)
 
-    # 3. Thêm nhiễu Gaussian
+    # 3. Add Gaussian noise
     noise = np.random.normal(0, 25, image.shape).astype(np.uint8)
-    noisy_image = cv2.add(image, noise)
+    noisy_image = cv2.add(image_uint8, noise)
     augmented_images.append(noisy_image)
 
-    # 4. Cắt hình ảnh
+    # 4. Crop image
     h, w = image.shape[:2]
-    for _ in range(5):  # Tạo 5 hình ảnh cắt ngẫu nhiên
-        x = random.randint(0, w//4)  # Cắt ngẫu nhiên từ 0 đến 1/4 chiều rộng
-        y = random.randint(0, h//4)  # Cắt ngẫu nhiên từ 0 đến 1/4 chiều cao
-        cropped_image = image[y:h-10, x:w-10]
-        # Đảm bảo kích thước giống nhau
-        augmented_images.append(cv2.resize(cropped_image, (128, 128)))
+    for _ in range(5):
+        x = random.randint(0, w//4)
+        y = random.randint(0, h//4)
+        cropped_image = image_uint8[y:h-10, x:w-10]
+        if cropped_image.shape[0] > 0 and cropped_image.shape[1] > 0:
+            resized_image = cv2.resize(cropped_image, (img_width, img_height))
+            augmented_images.append(resized_image)
 
-    # 5. Lật ngang
-    flipped_image = cv2.flip(image, 1)  # Lật ngang
+    # 5. Flip horizontally
+    flipped_image = cv2.flip(image_uint8, 1)
     augmented_images.append(flipped_image)
 
-    # 6. Biến đổi hình học (Co giãn)
+    # 6. Geometric transformation (Shear)
     rows, cols = image.shape[:2]
     M = np.float32([[1, 0, random.randint(-10, 10)],
-                   [0, 1, random.randint(-10, 10)]])  # Di chuyển ngẫu nhiên
-    sheared_image = cv2.warpAffine(image, M, (cols, rows))
+                   [0, 1, random.randint(-10, 10)]])
+    sheared_image = cv2.warpAffine(image_uint8, M, (cols, rows))
     augmented_images.append(sheared_image)
+
+    # Convert back to float32, normalize, and ensure 3D shape
+    augmented_images = [img.astype(
+        'float32') / 255.0 for img in augmented_images]
+    augmented_images = [np.expand_dims(
+        img, axis=-1) if len(img.shape) == 2 else img for img in augmented_images]
+
+    for i, img in enumerate(augmented_images):
+        print(f"Shape of augmented image {i}: {img.shape}")
 
     return augmented_images
 
 
 # Hàm thêm dấu vân tay mới
 def add_new_fingerprint(model, new_fingerprint_path, new_label):
-    augmented_images = preprocess_images(new_fingerprint_path)
-    new_image = preprocess_images(new_fingerprint_path)
-    new_image = np.expand_dims(new_image, axis=0)
+    img = preprocess_images(new_fingerprint_path)
+    print(f"Shape of new_image: {img.shape}")
+    new_image = np.expand_dims(img, axis=0)
+    print(f"Shape of new_image_expanded: {new_image.shape}")
+    if new_image.shape[1:] != (img_height, img_width, 1):
+        raise ValueError(
+            f"Incorrect image shape: {new_image.shape[1:]}. Expected: ({img_height}, {img_width}, 1)")
     new_feature = model.predict(new_image)
+
     features = np.load('fingerprint_features.npy')
     labels = np.load('fingerprint_labels.npy')
     features = np.vstack([features, new_feature])
     labels = np.append(labels, new_label)
-    for image in augmented_images:
-        image = np.expand_dims(image, axis=0)
-        # Dự đoán đặc trưng cho từng hình ảnh biến đổi
-        new_feature = model.predict(image)
-        features = np.vstack([features, new_feature])
+
+    # Augment the image
+    augmented_images = augment_image(img)
+    for i, aug_img in enumerate(augmented_images):
+        print(f"Processing augmented image {i}")
+        aug_img_expanded = np.expand_dims(aug_img, axis=0)
+        print(
+            f"Shape of augmented image before prediction: {aug_img_expanded.shape}")
+        if aug_img_expanded.shape[1:] != (img_height, img_width, 1):
+            print(
+                f"Skipping augmented image with incorrect shape: {aug_img_expanded.shape}")
+            continue
+        aug_feature = model.predict(aug_img_expanded)
+        features = np.vstack([features, aug_feature])
         labels = np.append(labels, new_label)
     np.save('fingerprint_features.npy', features)
     np.save('fingerprint_labels.npy', labels)
+
+
+def get_new_label():
+    try:
+        labels = np.load("fingerprint_labels.npy")
+        return len(labels)+1
+    except Exception as e:
+        return 0
 
 
 @app.route('/api/upload', methods=['POST'])
@@ -135,9 +180,14 @@ def upload_image():
         filename = file.filename
         file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         file.save(file_path)
-        new_label = int(request.form['label'])
-        add_new_fingerprint(model, file_path, new_label)
-        return jsonify({'message': 'Fingerprint added successfully!'})
+        new_label = get_new_label()
+        try:
+            add_new_fingerprint(model, file_path, new_label)
+            print("Fingerprint added successfully")
+            return jsonify({'message': 'Fingerprint added successfully!'})
+        except Exception as e:
+            print(f"Error adding fingerprint: {str(e)}")
+            return jsonify({'error': str(e)}), 500
 
 
 # Hàm xác thực dấu vân tay
@@ -171,7 +221,29 @@ def verify_image():
             return jsonify({'message': 'Unlock failed! No matching fingerprint found.'})
 
 
+def reset_fingerprint(feature_size):
+    if os.path.exists("fingerprint_features.npy"):
+        os.remove("fingerprint_features.npy")
+    if os.path.exists("fingerprint_labels.npy"):
+        os.remove("fingerprint_labels.npy")
+    np.save('fingerprint_features.npy', np.empty((0, feature_size)))
+    np.save('fingerprint_labels.npy', np.array([]))
+
+
+@app.route('/api/reset', method=['POST'])
+def reset_fingerprint():
+    try:
+        output_shape = model.output_shape
+        feature_size = output_shape[-1]
+        reset_fingerprint(feature_size)
+        return jsonify({"message": "Fingerprint data has been reset successfully."}), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 if __name__ == '__main__':
     if not os.path.exists(app.config['UPLOAD_FOLDER']):
         os.makedirs(app.config['UPLOAD_FOLDER'])
+    if not os.path.exists(app.config['VEFIFY_FOLDER']):
+        os.makedirs(app.config['VEFIFY_FOLDER'])
     app.run(debug=True)
