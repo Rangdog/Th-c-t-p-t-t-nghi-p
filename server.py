@@ -230,7 +230,7 @@ def reset_fingerprint(feature_size):
     np.save('fingerprint_labels.npy', np.array([]))
 
 
-@app.route('/api/reset', method=['POST'])
+@app.route('/api/reset', methods=['POST'])
 def reset_fingerprint():
     try:
         output_shape = model.output_shape
