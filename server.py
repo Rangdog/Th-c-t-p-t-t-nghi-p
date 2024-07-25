@@ -180,11 +180,13 @@ def upload_image():
         filename = file.filename
         file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         file.save(file_path)
-        new_label = get_new_label()
+        new_label = get_new_label()  # Lấy new_label
+
         try:
             add_new_fingerprint(model, file_path, new_label)
             print("Fingerprint added successfully")
-            return jsonify({'message': 'Fingerprint added successfully!'})
+            # Trả về new_label trong phản hồi
+            return jsonify({'message': 'Fingerprint added successfully!', 'new_label': new_label})
         except Exception as e:
             print(f"Error adding fingerprint: {str(e)}")
             return jsonify({'error': str(e)}), 500
@@ -215,7 +217,7 @@ def verify_image():
         file_path = os.path.join(app.config['VEFIFY_FOLDER'], filename)
         file.save(file_path)
         best_match_label, similarity = verify_fingerprint(model, file_path)
-        if similarity > 0.85:
+        if similarity > 0.95:
             return jsonify({'message': 'Unlock successful!', 'label': best_match_label, 'similarities': similarity})
         else:
             return jsonify({'message': 'Unlock failed! No matching fingerprint found.'})
