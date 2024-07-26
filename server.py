@@ -8,6 +8,7 @@ from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropou
 from tensorflow.keras.optimizers import Adam
 from sklearn.metrics.pairwise import cosine_similarity
 import random
+import time
 
 app = Flask(__name__)
 CORS(app)
@@ -173,23 +174,37 @@ def get_new_label():
 def upload_image():
     if 'file' not in request.files:
         return jsonify({'error': 'No file part'}), 400
+
     file = request.files['file']
+
     if file.filename == '':
         return jsonify({'error': 'No selected file'}), 400
+
+    # Kiểm tra xem file có phải là hình ảnh không
+    if not file.content_type.startswith('image/'):
+        return jsonify({'error': 'File is not an image'}), 400
+
+    # Lưu tệp vào thư mục đã chỉ định
     if file:
-        filename = file.filename
+        # Tạo tên tệp duy nhất
+        filename = f"{int(time.time())}_{file.filename}"
         file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+
+        # Lưu tệp
         file.save(file_path)
+
         new_label = get_new_label()  # Lấy new_label
 
         try:
             add_new_fingerprint(model, file_path, new_label)
             print("Fingerprint added successfully")
             # Trả về new_label trong phản hồi
-            return jsonify({'message': 'Fingerprint added successfully!', 'new_label': new_label})
+            return jsonify({'message': 'Fingerprint added successfully!', 'new_label': new_label}), 200
         except Exception as e:
             print(f"Error adding fingerprint: {str(e)}")
             return jsonify({'error': str(e)}), 500
+
+    return jsonify({'error': 'An unknown error occurred'}), 500
 
 
 # Hàm xác thực dấu vân tay
