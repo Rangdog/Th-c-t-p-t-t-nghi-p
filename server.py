@@ -179,7 +179,7 @@ def upload_image():
 
     if file.filename == '':
         return jsonify({'error': 'No selected file'}), 400
-
+    print(file.name)
     # Kiểm tra xem file có phải là hình ảnh không
     if not file.content_type.startswith('image/'):
         return jsonify({'error': 'File is not an image'}), 400
@@ -205,7 +205,7 @@ def upload_image():
             return jsonify({'error': str(e)}), 500
 
     return jsonify({'error': 'An unknown error occurred'}), 500
-
+    
 
 # Hàm xác thực dấu vân tay
 def verify_fingerprint(model, fingerprint_image_path):
