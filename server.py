@@ -47,11 +47,14 @@ def create_model():
 
 
 model = create_model()
+model2 = create_model()
 
 model.load_weights('fingerprint_model_weights.weights.h5')
-
+model2.load_weights('fingerprint_model_weights2.weights.h5')
 
 # Hàm tiền xử lý hình ảnh
+
+
 def preprocess_images(img_path):
     img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
     img = cv2.resize(img, (img_width, img_height))
@@ -160,12 +163,50 @@ def add_new_fingerprint(model, new_fingerprint_path, new_label):
         labels = np.append(labels, new_label)
     np.save('fingerprint_features.npy', features)
     np.save('fingerprint_labels.npy', labels)
+# Hàm thêm dấu vân tay mới
+
+
+def add_new_fingerprint_2(model, new_fingerprint_path, new_label):
+    img = preprocess_images(new_fingerprint_path)
+    print(f"Shape of new_image: {img.shape}")
+    new_image = np.expand_dims(img, axis=0)
+    print(f"Shape of new_image_expanded: {new_image.shape}")
+    if new_image.shape[1:] != (img_height, img_width, 1):
+        raise ValueError(
+            f"Incorrect image shape: {new_image.shape[1:]}. Expected: ({img_height}, {img_width}, 1)")
+    new_feature = model.predict(new_image)
+
+    features = np.load('fingerprint_features1.npy')
+    labels = np.load('fingerprint_labels1.npy')
+    features = np.vstack([features, new_feature])
+    labels = np.append(labels, new_label)
+
+    # Augment the image
+    augmented_images = augment_image(img)
+    for i, aug_img in enumerate(augmented_images):
+        print(f"Processing augmented image {i}")
+        aug_img_expanded = np.expand_dims(aug_img, axis=0)
+        print(
+            f"Shape of augmented image before prediction: {aug_img_expanded.shape}")
+        if aug_img_expanded.shape[1:] != (img_height, img_width, 1):
+            print(
+                f"Skipping augmented image with incorrect shape: {aug_img_expanded.shape}")
+            continue
+        aug_feature = model.predict(aug_img_expanded)
+        features = np.vstack([features, aug_feature])
+        labels = np.append(labels, new_label)
+    np.save('fingerprint_features1.npy', features)
+    np.save('fingerprint_labels1.npy', labels)
 
 
 def get_new_label():
     try:
         labels = np.load("fingerprint_labels.npy")
-        return len(labels)+1
+        # Lấy các giá trị duy nhất từ labels
+        unique_labels = np.unique(labels)
+
+        # Trả về số lượng nhãn duy nhất
+        return len(unique_labels) + 1
     except Exception as e:
         return 0
 
@@ -197,6 +238,7 @@ def upload_image():
 
         try:
             add_new_fingerprint(model, file_path, new_label)
+            add_new_fingerprint_2(model2, file_path, new_label)
             print("Fingerprint added successfully")
             # Trả về new_label trong phản hồi
             return jsonify({'message': 'Fingerprint added successfully!', 'new_label': new_label}), 200
@@ -205,7 +247,7 @@ def upload_image():
             return jsonify({'error': str(e)}), 500
 
     return jsonify({'error': 'An unknown error occurred'}), 500
-    
+
 
 # Hàm xác thực dấu vân tay
 def verify_fingerprint(model, fingerprint_image_path):
@@ -214,6 +256,20 @@ def verify_fingerprint(model, fingerprint_image_path):
     input_feature = model.predict(input_image).flatten()
     features = np.load('fingerprint_features.npy')
     labels = np.load('fingerprint_labels.npy')
+    similarities = cosine_similarity([input_feature], features)
+    best_match_index = np.argmax(similarities)
+    best_match_label = labels[best_match_index]
+    return int(best_match_label), float(similarities[0][best_match_index])
+
+# Hàm xác thực dấu vân tay
+
+
+def verify_fingerprint_2(model, fingerprint_image_path):
+    input_image = preprocess_images(fingerprint_image_path)
+    input_image = np.expand_dims(input_image, axis=0)
+    input_feature = model.predict(input_image).flatten()
+    features = np.load('fingerprint_features1.npy')
+    labels = np.load('fingerprint_labels1.npy')
     similarities = cosine_similarity([input_feature], features)
     best_match_index = np.argmax(similarities)
     best_match_label = labels[best_match_index]
@@ -232,13 +288,35 @@ def verify_image():
         file_path = os.path.join(app.config['VEFIFY_FOLDER'], filename)
         file.save(file_path)
         best_match_label, similarity = verify_fingerprint(model, file_path)
+        print("label: ", best_match_label)
+        print("similarity: ", similarity)
         if similarity > 0.95:
             return jsonify({'message': 'Unlock successful!', 'label': best_match_label, 'similarities': similarity})
         else:
             return jsonify({'message': 'Unlock failed! No matching fingerprint found.'})
 
 
-def reset_fingerprint(feature_size):
+@app.route('/api/verify_model_2', methods=['POST'])
+def verify_image_by_model_2():
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file part'}), 400
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'error': 'No selected file'}), 400
+    if file:
+        filename = file.filename
+        file_path = os.path.join(app.config['VEFIFY_FOLDER'], filename)
+        file.save(file_path)
+        best_match_label, similarity = verify_fingerprint_2(model2, file_path)
+        print("label by model2: ", best_match_label)
+        print("similarity by model2: ", similarity)
+        if similarity > 0.99:
+            return jsonify({'message': 'Unlock successful!', 'label': best_match_label, 'similarities': similarity})
+        else:
+            return jsonify({'message': 'Unlock failed! No matching fingerprint found.'})
+
+
+def reset_fingerprint_data(feature_size):
     if os.path.exists("fingerprint_features.npy"):
         os.remove("fingerprint_features.npy")
     if os.path.exists("fingerprint_labels.npy"):
@@ -246,13 +324,20 @@ def reset_fingerprint(feature_size):
     np.save('fingerprint_features.npy', np.empty((0, feature_size)))
     np.save('fingerprint_labels.npy', np.array([]))
 
+    if os.path.exists("fingerprint_features1.npy"):
+        os.remove("fingerprint_features1.npy")
+    if os.path.exists("fingerprint_labels1.npy"):
+        os.remove("fingerprint_labels1.npy")
+    np.save('fingerprint_features1.npy', np.empty((0, feature_size)))
+    np.save('fingerprint_labels1.npy', np.array([]))
+
 
 @app.route('/api/reset', methods=['POST'])
 def reset_fingerprint():
     try:
         output_shape = model.output_shape
         feature_size = output_shape[-1]
-        reset_fingerprint(feature_size)
+        reset_fingerprint_data(feature_size)
         return jsonify({"message": "Fingerprint data has been reset successfully."}), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
