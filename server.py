@@ -9,6 +9,7 @@ from tensorflow.keras.optimizers import Adam
 from sklearn.metrics.pairwise import cosine_similarity
 import random
 import time
+import matplotlib.pyplot as plt
 
 app = Flask(__name__)
 CORS(app)
@@ -49,7 +50,7 @@ def create_model():
 model = create_model()
 model2 = create_model()
 
-model.load_weights('fingerprint_model_weights.weights.h5')
+model.load_weights('fingerprint_model_weights1.weights.h5')
 model2.load_weights('fingerprint_model_weights2.weights.h5')
 
 # Hàm tiền xử lý hình ảnh
@@ -67,59 +68,124 @@ def preprocess_images(img_path):
 def augment_image(image):
     augmented_images = []
 
-    # Ensure image is 3D (height, width, channel)
+    # Đảm bảo hình ảnh có 3 chiều (chiều cao, chiều rộng, kênh)
     if len(image.shape) == 2:
         image = np.expand_dims(image, axis=-1)
 
-    # Check if the image is empty
+    # Kiểm tra xem hình ảnh có rỗng không
     if image.size == 0 or image.shape[0] == 0 or image.shape[1] == 0:
         print("Error: Empty image provided to augment_image function")
-        return [image]  # Return the original image if it's empty
+        return [image]  # Trả về hình ảnh gốc nếu rỗng
 
-    # Convert back to uint8 for OpenCV operations
+    # Chuyển đổi về uint8 cho các thao tác OpenCV
     image_uint8 = (image * 255).astype(np.uint8)
 
-    # 1. Rotate image
+    # 1. Xoay hình ảnh với padding
     for angle in range(-30, 31, 10):
+        # Tạo một canvas trắng
+        padded_image = cv2.copyMakeBorder(
+            image_uint8, 20, 20, 20, 20, cv2.BORDER_CONSTANT, value=[255, 255, 255])
         M = cv2.getRotationMatrix2D(
-            (image.shape[1] // 2, image.shape[0] // 2), angle, 1.0)
+            (padded_image.shape[1] // 2, padded_image.shape[0] // 2), angle, 1.0)
         rotated_image = cv2.warpAffine(
-            image_uint8, M, (image.shape[1], image.shape[0]))
-        augmented_images.append(rotated_image)
+            padded_image, M, (padded_image.shape[1], padded_image.shape[0]))
+        # Crop lại kích thước gốc
+        cropped_image = rotated_image[20:-20, 20:-20]
+        augmented_images.append(cropped_image)
 
-    # 2. Change brightness
-    for brightness in [0.5, 1, 1.5]:
-        bright_image = cv2.convertScaleAbs(
-            image_uint8, alpha=brightness, beta=0)
+    # 2. Thay đổi độ sáng
+    for alpha in [0.5, 1.0, 1.5]:  # Tăng/giảm độ sáng
+        bright_image = cv2.convertScaleAbs(image_uint8, alpha=alpha, beta=0)
         augmented_images.append(bright_image)
 
-    # 3. Add Gaussian noise
+    # 3. Thêm nhiễu Gaussian
     noise = np.random.normal(0, 25, image.shape).astype(np.uint8)
     noisy_image = cv2.add(image_uint8, noise)
     augmented_images.append(noisy_image)
 
-    # 4. Crop image
+    # 4. Làm mờ Gaussian
+    blurred_image = cv2.GaussianBlur(image_uint8, (5, 5), 0)
+    augmented_images.append(blurred_image)
+
+    # 5. Biến hình đàn hồi
+    def elastic_transform(image, alpha, sigma):
+        random_state = np.random.RandomState(None)
+        shape = image.shape
+        dx = random_state.normal(0, sigma, size=shape[0]).astype(np.float32)
+        dy = random_state.normal(0, sigma, size=shape[1]).astype(np.float32)
+        x, y = np.meshgrid(np.arange(shape[1]), np.arange(shape[0]))
+        distorted_image = cv2.remap(image, (x + dx[:, np.newaxis]).astype(np.float32),
+                                    (y + dy[np.newaxis, :]).astype(np.float32),
+                                    interpolation=cv2.INTER_LINEAR)
+        return distorted_image
+
+    elastic_image = elastic_transform(image_uint8, alpha=34, sigma=4)
+    augmented_images.append(elastic_image)
+
+    # 6. Cắt ngẫu nhiên
     h, w = image.shape[:2]
     for _ in range(5):
-        x = random.randint(0, w//4)
-        y = random.randint(0, h//4)
+        # Tạo cắt ngẫu nhiên trong khoảng 1/4 kích thước
+        x = random.randint(0, w // 4)
+        y = random.randint(0, h // 4)
         cropped_image = image_uint8[y:h-10, x:w-10]
         if cropped_image.shape[0] > 0 and cropped_image.shape[1] > 0:
-            resized_image = cv2.resize(cropped_image, (img_width, img_height))
-            augmented_images.append(resized_image)
+            # Đảm bảo kích thước là 96x96
+            resized_image = cv2.resize(cropped_image, (96, 96))
+            # Tạo nền trắng
+            white_background = np.ones((96, 96, 3), dtype=np.uint8) * 255
+            if resized_image.ndim == 2:  # Nếu là hình ảnh grayscale, chuyển sang RGB
+                resized_image = cv2.cvtColor(resized_image, cv2.COLOR_GRAY2BGR)
+            # Chèn hình ảnh vào nền trắng
+            white_background[:resized_image.shape[0],
+                             :resized_image.shape[1]] = resized_image
+            augmented_images.append(white_background)
 
-    # 5. Flip horizontally
+    # 7. Lật hình ảnh theo chiều ngang
     flipped_image = cv2.flip(image_uint8, 1)
-    augmented_images.append(flipped_image)
+    white_flipped_background = np.ones(
+        (96, 96, 3), dtype=np.uint8) * 255  # Nền trắng
+    if flipped_image.ndim == 2:  # Nếu là hình ảnh grayscale
+        flipped_image = cv2.cvtColor(flipped_image, cv2.COLOR_GRAY2BGR)
+    white_flipped_background[:flipped_image.shape[0],
+                             :flipped_image.shape[1]] = flipped_image
+    augmented_images.append(white_flipped_background)
 
-    # 6. Geometric transformation (Shear)
-    rows, cols = image.shape[:2]
-    M = np.float32([[1, 0, random.randint(-10, 10)],
-                   [0, 1, random.randint(-10, 10)]])
-    sheared_image = cv2.warpAffine(image_uint8, M, (cols, rows))
-    augmented_images.append(sheared_image)
+    # 10. Thêm nhiễu muối và tiêu
+    def salt_and_pepper_noise(image, salt_prob, pepper_prob):
+        # Kiểm tra xem hình ảnh có rỗng không
+        if image.size == 0 or image.shape[0] == 0 or image.shape[1] == 0:
+            print("Error: Input image is empty or has invalid dimensions.")
+            return image  # Trả về hình ảnh gốc nếu rỗng
 
-    # Convert back to float32, normalize, and ensure 3D shape
+        noisy = np.copy(image)
+
+        # Thêm nhiễu muối
+        num_salt = np.ceil(salt_prob * image.size).astype(int)  # Số lượng muối
+        if num_salt > 0:  # Kiểm tra nếu có muối để thêm
+            coords = [np.random.randint(0, i, num_salt) for i in image.shape]
+            noisy[coords[0], coords[1]] = 1  # Thiết lập nhiễu muối thành trắng
+
+        # Thêm nhiễu tiêu
+        num_pepper = np.ceil(
+            pepper_prob * image.size).astype(int)  # Số lượng tiêu
+        if num_pepper > 0:  # Kiểm tra nếu có tiêu để thêm
+            coords = [np.random.randint(0, i, num_pepper) for i in image.shape]
+            noisy[coords[0], coords[1]] = 0  # Thiết lập nhiễu tiêu thành đen
+
+        return noisy
+
+    # Thêm nhiễu muối và tiêu
+    sp_image = salt_and_pepper_noise(
+        image_uint8, salt_prob=0.02, pepper_prob=0.02)
+    white_sp_background = np.ones(
+        (96, 96, 3), dtype=np.uint8) * 255  # Nền trắng
+    if sp_image.ndim == 2:  # Nếu là hình ảnh grayscale
+        sp_image = cv2.cvtColor(sp_image, cv2.COLOR_GRAY2BGR)
+    white_sp_background[:sp_image.shape[0], :sp_image.shape[1]] = sp_image
+    augmented_images.append(white_sp_background)
+
+    # Chuyển đổi lại về float32, chuẩn hóa, và đảm bảo hình dạng 3D
     augmented_images = [img.astype(
         'float32') / 255.0 for img in augmented_images]
     augmented_images = [np.expand_dims(
@@ -149,6 +215,29 @@ def add_new_fingerprint(model, new_fingerprint_path, new_label):
 
     # Augment the image
     augmented_images = augment_image(img)
+    # # Kiểm tra số lượng hình ảnh tăng cường
+    # num_images_to_plot = min(22, len(augmented_images)
+    #                          )  # Vẽ tối đa 22 hình ảnh
+
+    # # Tạo hình vẽ với kích thước lớn hơn để chứa tất cả hình ảnh
+    # fig, axes = plt.subplots(4, 6, figsize=(20, 15))  # Tạo lưới 4 hàng, 6 cột
+
+    # for i in range(num_images_to_plot):
+    #     aug_img = augmented_images[i]
+
+    #     # Hiển thị hình ảnh
+    #     # Sử dụng squeeze để bỏ chiều kênh nếu cần
+    #     axes[i // 6, i % 6].imshow(aug_img.squeeze(), cmap='gray')
+    #     axes[i // 6, i % 6].axis('off')  # Tắt trục
+    #     axes[i // 6, i % 6].set_title(f'Augmented Image {i + 1}')  # Tiêu đề
+
+    # # Tắt trục không sử dụng (nếu có)
+    # for j in range(num_images_to_plot, axes.size):
+    #     axes[j // 6, j % 6].axis('off')
+
+    # # Điều chỉnh lưới để không bị chồng chéo
+    # plt.tight_layout()
+    # plt.show()  # Hiển thị hình ảnh
     for i, aug_img in enumerate(augmented_images):
         print(f"Processing augmented image {i}")
         aug_img_expanded = np.expand_dims(aug_img, axis=0)
