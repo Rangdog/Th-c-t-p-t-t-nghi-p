@@ -382,7 +382,7 @@ def verify_image():
         if similarity > 0.95:
             return jsonify({'message': 'Unlock successful!', 'label': best_match_label, 'similarities': similarity})
         else:
-            return jsonify({'message': 'Unlock failed! No matching fingerprint found.'})
+            return jsonify({'message': 'Unlock failed! No matching fingerprint found.', 'label': best_match_label, 'similarities': similarity})
 
 
 @app.route('/api/verify_model_2', methods=['POST'])
@@ -402,7 +402,7 @@ def verify_image_by_model_2():
         if similarity > 0.99:
             return jsonify({'message': 'Unlock successful!', 'label': best_match_label, 'similarities': similarity})
         else:
-            return jsonify({'message': 'Unlock failed! No matching fingerprint found.'})
+            return jsonify({'message': 'Unlock failed! No matching fingerprint found.', 'label': best_match_label, 'similarities': similarity})
 
 
 def reset_fingerprint_data(feature_size):
