@@ -379,7 +379,7 @@ def verify_image():
         best_match_label, similarity = verify_fingerprint(model, file_path)
         print("label: ", best_match_label)
         print("similarity: ", similarity)
-        if similarity > 0.95:
+        if similarity > 0.99:
             return jsonify({'message': 'Unlock successful!', 'label': best_match_label, 'similarities': similarity})
         else:
             return jsonify({'message': 'Unlock failed! No matching fingerprint found.', 'label': best_match_label, 'similarities': similarity})
